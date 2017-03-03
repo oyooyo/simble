@@ -1,0 +1,34 @@
+{
+  "name": "simble",
+  "version": "0.0.3",
+  "description": "SIMple access to BLE (Bluetooth Low Energy = Bluetooth 4.x) devices",
+  "main": "simble.js",
+  "dependencies": {
+    "noble": "^1.8.0"
+  },
+  "devDependencies": {
+    "coffee-script": "^1.12.4"
+  },
+  "scripts": {
+    "prepublish": "coffee --compile --bare --no-header --map simble.coffee",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "sdf"
+  },
+  "keywords": [
+    "Bluetooth Low Energy",
+    "Bluetooth LE",
+    "Bluetooth 4.x",
+    "Bluetooth 4.0",
+    "Bluetooth",
+    "BTLE",
+    "Web Bluetooth",
+    "noble"
+  ],
+  "author": {
+    "name": "oyo"
+  },
+  "license": "ISC"
+}
