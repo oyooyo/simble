@@ -13,7 +13,7 @@ Here's a short example of using *simble*. The following code will try to connect
 This GATT characteristic will then be *subscribed to*, by passing a callback function that will be called whenever there is new heart rate measurement data available.
 That callback function simply prints the current heart rate (stored in the second byte of the characteristic's data) to the console.
 
-`
+```
 bluetooth = require('simble');
 
 bluetooth.requestCharacteristic(0x2A37, 0x180D)
@@ -22,4 +22,4 @@ bluetooth.requestCharacteristic(0x2A37, 0x180D)
 		console.log('Heart Rate: ' + event.target.value[1]);
 	});
 });
-`
+```
