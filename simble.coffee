@@ -114,8 +114,15 @@ request_characteristic = (characteristic_id, service_id, options) ->
 	.then (service) ->
 		service.getCharacteristic(characteristic_id)
 
+request_characteristics = (characteristic_ids, service_id, options) ->
+	request_service(service_id, options)
+	.then (service) ->
+		Promise.all characteristic_ids.map (characteristic_id) ->
+			service.getCharacteristic(characteristic_id)
+
 module.exports =
 	requestDevice: request_device
 	requestServer: request_server
 	requestService: request_service
 	requestCharacteristic: request_characteristic
+	requestCharacteristics: request_characteristics

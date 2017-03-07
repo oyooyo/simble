@@ -1,4 +1,4 @@
-var Characteristic, Device, EventEmitter, Server, Service, convert_id, noble, request_characteristic, request_device, request_server, request_service;
+var Characteristic, Device, EventEmitter, Server, Service, convert_id, noble, request_characteristic, request_characteristics, request_device, request_server, request_service;
 
 noble = require('noble');
 
@@ -225,11 +225,20 @@ request_characteristic = function(characteristic_id, service_id, options) {
   });
 };
 
+request_characteristics = function(characteristic_ids, service_id, options) {
+  return request_service(service_id, options).then(function(service) {
+    return Promise.all(characteristic_ids.map(function(characteristic_id) {
+      return service.getCharacteristic(characteristic_id);
+    }));
+  });
+};
+
 module.exports = {
   requestDevice: request_device,
   requestServer: request_server,
   requestService: request_service,
-  requestCharacteristic: request_characteristic
+  requestCharacteristic: request_characteristic,
+  requestCharacteristics: request_characteristics
 };
 
 //# sourceMappingURL=simble.js.map
