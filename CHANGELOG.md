@@ -16,3 +16,7 @@ Updated README.
 
 - Added `requestCharacteristics` convenience function
 - Extended README
+
+## v0.1.0
+
+- Complety changed API; no longer tries to mimic Web Bluetooth
