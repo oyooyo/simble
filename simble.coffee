@@ -235,26 +235,41 @@ create_filter = (options) ->
 				return false
 		true
 
+ensure_noble_state = (noble_state_string) ->
+	new Promise (resolve, reject) ->
+		if (noble.state is noble_state_string)
+			resolve()
+		else
+			noble.on 'stateChange', (state) ->
+				if (state is noble_state_string)
+					resolve()
+		return
+
 scan_for_peripheral = (peripheral_filter) ->
 	if (typeof(peripheral_filter) isnt 'function')
 		peripheral_filter = create_filter(peripheral_filter)
+	ensure_noble_state('poweredOn')
+	.then ->
+		new Promise (resolve, reject) ->
+			noble.on 'discover', (noble_peripheral) ->
+				peripheral = new Peripheral(noble_peripheral)
+				if peripheral_filter(peripheral)
+					resolve(peripheral)
+					noble.stopScanning()
+				return
+			noble.startScanning()
+			return
+
+time_limit_promise = (promise, time_limit) ->
 	new Promise (resolve, reject) ->
-		noble.on 'stateChange', (state) ->
-			if (state is 'poweredOn')
-				noble.on 'discover', (noble_peripheral) ->
-					peripheral = new Peripheral(noble_peripheral)
-					if peripheral_filter(peripheral)
-						resolve(peripheral)
-						noble.stopScanning()
-					return
-				noble.startScanning()
-			else
-				noble.stopScanning()
-				reject('Not powered')
-			return
-		noble.once 'scanStop', ->
-			reject('scanning stopped')
-			return
+		Promise.resolve(promise)
+		.then (promise_result) ->
+			resolve(promise_result)
+		.catch (promise_error) ->
+			reject(promise_error)
+		setTimeout ->
+				reject('Promise did not resolve within time')
+			, time_limit
 		return
 
 stop_scanning = ->

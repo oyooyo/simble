@@ -1,5 +1,5 @@
 'use strict';
-var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_service_filter, advertised_services_filter, buffer_to_byte_array, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, create_filter, create_sub_filter, first_valid_value, is_valid_value, name_filter, noble, scan_for_peripheral, split_into_chunks, stop_scanning,
+var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_service_filter, advertised_services_filter, buffer_to_byte_array, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, create_filter, create_sub_filter, ensure_noble_state, first_valid_value, is_valid_value, name_filter, noble, scan_for_peripheral, split_into_chunks, stop_scanning, time_limit_promise,
   indexOf = [].indexOf;
 
 noble = require('noble');
@@ -358,30 +358,49 @@ create_filter = function(options) {
   };
 };
 
+ensure_noble_state = function(noble_state_string) {
+  return new Promise(function(resolve, reject) {
+    if (noble.state === noble_state_string) {
+      resolve();
+    } else {
+      noble.on('stateChange', function(state) {
+        if (state === noble_state_string) {
+          return resolve();
+        }
+      });
+    }
+  });
+};
+
 scan_for_peripheral = function(peripheral_filter) {
   if (typeof peripheral_filter !== 'function') {
     peripheral_filter = create_filter(peripheral_filter);
   }
+  return ensure_noble_state('poweredOn').then(function() {
+    return new Promise(function(resolve, reject) {
+      noble.on('discover', function(noble_peripheral) {
+        var peripheral;
+        peripheral = new Peripheral(noble_peripheral);
+        if (peripheral_filter(peripheral)) {
+          resolve(peripheral);
+          noble.stopScanning();
+        }
+      });
+      noble.startScanning();
+    });
+  });
+};
+
+time_limit_promise = function(promise, time_limit) {
   return new Promise(function(resolve, reject) {
-    noble.on('stateChange', function(state) {
-      if (state === 'poweredOn') {
-        noble.on('discover', function(noble_peripheral) {
-          var peripheral;
-          peripheral = new Peripheral(noble_peripheral);
-          if (peripheral_filter(peripheral)) {
-            resolve(peripheral);
-            noble.stopScanning();
-          }
-        });
-        noble.startScanning();
-      } else {
-        noble.stopScanning();
-        reject('Not powered');
-      }
+    Promise.resolve(promise).then(function(promise_result) {
+      return resolve(promise_result);
+    }).catch(function(promise_error) {
+      return reject(promise_error);
     });
-    noble.once('scanStop', function() {
-      reject('scanning stopped');
-    });
+    setTimeout(function() {
+      return reject('Promise did not resolve within time');
+    }, time_limit);
   });
 };
 
