@@ -83,15 +83,13 @@ class Service extends EventEmitter
 	constructor: (@noble_service, @peripheral) ->
 		super()
 		@uuid = canonicalize_bluetooth_uuid(@noble_service.uuid)
-		@characteristics = {}
 		@update_characteristics()
 		return
 	update_characteristics: ->
+		@characteristics = {}
 		if @noble_service.characteristics
 			for noble_characteristic in @noble_service.characteristics
-				characteristic_uuid = canonicalize_bluetooth_uuid(noble_characteristic.uuid)
-				if (not @characteristics.hasOwnProperty(characteristic_uuid))
-					@characteristics[characteristic_uuid] = new Characteristic(noble_characteristic, @)
+				@characteristics[canonicalize_bluetooth_uuid(noble_characteristic.uuid)] = new Characteristic(noble_characteristic, @)
 		return
 	ensure_discovered: ->
 		new Promise (resolve, reject) =>
@@ -111,7 +109,6 @@ class Peripheral extends EventEmitter
 		super()
 		@address = canonicalize_mac_address(@noble_peripheral.address)
 		@address_type = @noble_peripheral.addressType
-		@services = {}
 		@update_services()
 		@connectable = @noble_peripheral.connectable
 		@rssi = @noble_peripheral.rssi
@@ -127,6 +124,7 @@ class Peripheral extends EventEmitter
 			return
 		@noble_peripheral.on 'disconnect', =>
 			@is_connected = false
+			@is_discovered = false
 			@emit 'disconnected'
 			return
 		@noble_peripheral.on 'rssiUpdate', (rssi) =>
@@ -135,21 +133,11 @@ class Peripheral extends EventEmitter
 			return
 		return
 	update_services: ->
+		@services = {}
 		if @noble_peripheral.services
 			for noble_service in @noble_peripheral.services
-				service_uuid = canonicalize_bluetooth_uuid(noble_service.uuid)
-				if (not @services.hasOwnProperty(service_uuid))
-					@services[service_uuid] = new Service(noble_service, @)
+				@services[canonicalize_bluetooth_uuid(noble_service.uuid)] = new Service(noble_service, @)
 		return
-	connect: ->
-		new Promise (resolve, reject) =>
-			@noble_peripheral.connect (error) =>
-				if error
-					reject(error)
-				else
-					resolve(@)
-				return
-			return
 	disconnect: ->
 		new Promise (resolve, reject) =>
 			@noble_peripheral.disconnect (error) =>
@@ -160,29 +148,40 @@ class Peripheral extends EventEmitter
 				return
 			return
 	ensure_connected: ->
-		if @is_connected
-			Promise.resolve(@)
-		else
-			@connect()
-	discover: ->
 		new Promise (resolve, reject) =>
-			@noble_peripheral.discoverAllServicesAndCharacteristics (error) =>
-				if error
-					reject(error)
-				else
-					@update_services()
-					@is_discovered = true
-					@emit 'discovered'
-					resolve(@)
-				return
+			if @is_connected
+				resolve(@)
+			else
+				@noble_peripheral.connect (error) =>
+					if error
+						reject(error)
+					else
+						resolve(@)
+					return
 			return
+	connect: ->
+		@ensure_connected()
 	ensure_discovered: ->
+		new Promise (resolve, reject) =>
+			if @is_discovered
+				resolve(@)
+			else
+				@noble_peripheral.discoverAllServicesAndCharacteristics (error) =>
+					if error
+						reject(error)
+					else
+						@update_services()
+						@is_discovered = true
+						@emit 'discovered'
+						resolve(@)
+					return
+			return
+	discover: ->
+		@ensure_discovered()
+	ensure_connected_and_discovered: ->
 		@ensure_connected()
 		.then =>
-			if @is_discovered
-				Promise.resolve(@)
-			else
-				@discover()
+			@ensure_discovered()
 	get_discovered_service: (service_id) ->
 		@services[canonicalize_bluetooth_uuid(service_id)]
 	get_service: (service_id) ->

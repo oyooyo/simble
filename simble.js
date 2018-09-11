@@ -124,21 +124,18 @@ Service = class Service extends EventEmitter {
     this.noble_service = noble_service1;
     this.peripheral = peripheral1;
     this.uuid = canonicalize_bluetooth_uuid(this.noble_service.uuid);
-    this.characteristics = {};
     this.update_characteristics();
     return;
   }
 
   update_characteristics() {
-    var characteristic_uuid, i, len, noble_characteristic, ref;
+    var i, len, noble_characteristic, ref;
+    this.characteristics = {};
     if (this.noble_service.characteristics) {
       ref = this.noble_service.characteristics;
       for (i = 0, len = ref.length; i < len; i++) {
         noble_characteristic = ref[i];
-        characteristic_uuid = canonicalize_bluetooth_uuid(noble_characteristic.uuid);
-        if (!this.characteristics.hasOwnProperty(characteristic_uuid)) {
-          this.characteristics[characteristic_uuid] = new Characteristic(noble_characteristic, this);
-        }
+        this.characteristics[canonicalize_bluetooth_uuid(noble_characteristic.uuid)] = new Characteristic(noble_characteristic, this);
       }
     }
   }
@@ -169,7 +166,6 @@ Peripheral = class Peripheral extends EventEmitter {
     this.noble_peripheral = noble_peripheral1;
     this.address = canonicalize_mac_address(this.noble_peripheral.address);
     this.address_type = this.noble_peripheral.addressType;
-    this.services = {};
     this.update_services();
     this.connectable = this.noble_peripheral.connectable;
     this.rssi = this.noble_peripheral.rssi;
@@ -186,6 +182,7 @@ Peripheral = class Peripheral extends EventEmitter {
     });
     this.noble_peripheral.on('disconnect', () => {
       this.is_connected = false;
+      this.is_discovered = false;
       this.emit('disconnected');
     });
     this.noble_peripheral.on('rssiUpdate', (rssi) => {
@@ -196,29 +193,15 @@ Peripheral = class Peripheral extends EventEmitter {
   }
 
   update_services() {
-    var i, len, noble_service, ref, service_uuid;
+    var i, len, noble_service, ref;
+    this.services = {};
     if (this.noble_peripheral.services) {
       ref = this.noble_peripheral.services;
       for (i = 0, len = ref.length; i < len; i++) {
         noble_service = ref[i];
-        service_uuid = canonicalize_bluetooth_uuid(noble_service.uuid);
-        if (!this.services.hasOwnProperty(service_uuid)) {
-          this.services[service_uuid] = new Service(noble_service, this);
-        }
+        this.services[canonicalize_bluetooth_uuid(noble_service.uuid)] = new Service(noble_service, this);
       }
     }
-  }
-
-  connect() {
-    return new Promise((resolve, reject) => {
-      this.noble_peripheral.connect((error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(this);
-        }
-      });
-    });
   }
 
   disconnect() {
@@ -234,35 +217,51 @@ Peripheral = class Peripheral extends EventEmitter {
   }
 
   ensure_connected() {
-    if (this.is_connected) {
-      return Promise.resolve(this);
-    } else {
-      return this.connect();
-    }
-  }
-
-  discover() {
     return new Promise((resolve, reject) => {
-      this.noble_peripheral.discoverAllServicesAndCharacteristics((error) => {
-        if (error) {
-          reject(error);
-        } else {
-          this.update_services();
-          this.is_discovered = true;
-          this.emit('discovered');
-          resolve(this);
-        }
-      });
+      if (this.is_connected) {
+        resolve(this);
+      } else {
+        this.noble_peripheral.connect((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(this);
+          }
+        });
+      }
     });
   }
 
+  connect() {
+    return this.ensure_connected();
+  }
+
   ensure_discovered() {
-    return this.ensure_connected().then(() => {
+    return new Promise((resolve, reject) => {
       if (this.is_discovered) {
-        return Promise.resolve(this);
+        resolve(this);
       } else {
-        return this.discover();
+        this.noble_peripheral.discoverAllServicesAndCharacteristics((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            this.update_services();
+            this.is_discovered = true;
+            this.emit('discovered');
+            resolve(this);
+          }
+        });
       }
+    });
+  }
+
+  discover() {
+    return this.ensure_discovered();
+  }
+
+  ensure_connected_and_discovered() {
+    return this.ensure_connected().then(() => {
+      return this.ensure_discovered();
     });
   }
 
