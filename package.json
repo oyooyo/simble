@@ -1,6 +1,6 @@
 {
   "name": "simble",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "SIMple access to BLE (Bluetooth Low Energy = Bluetooth 4.x) devices",
   "main": "simble.js",
   "scripts": {
@@ -26,6 +26,7 @@
   },
   "license": "ISC",
   "dependencies": {
+    "debug": "^4.0.0",
     "noble": "^1.9.1"
   },
   "devDependencies": {

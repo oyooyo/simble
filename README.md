@@ -4,4 +4,18 @@ A *node.js* module for **sim**ple access to **ble** (Bluetooth Low Energy = Blue
 
 This module is a wrapper for sandeepmistry's great [*noble*](https://www.npmjs.com/package/noble) package, using Promises instead of callbacks and providing a somewhat different API.
 
-Unfortunately, the API is not documented yet, so there's very little reason for others to use it yet. I published it because another Node.js module of mine requires it.
+## Usage example
+
+The following code (written in *[CoffeeScript](https://coffeescript.org/)*) scans for a nearby Bluetooth LE peripheral that advertises the ["Heart Rate" Service (ID: 0x180D)](https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.service.heart_rate.xml). If such a peripheral is found, it requests the peripheral's ["Heart Rate Measurement" Characteristic (ID: 0x2A37)](https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.characteristic.heart_rate_measurement.xml) *(the peripheral will auto-connect, since a connection is required for accessing/requesting a Characteristic)*. It then subscribes to that characteristic; whenever updates arrive, it will print the current heart rate (byte 1 in the data) to the console.
+
+    require("simble").scan_for_peripheral
+      service: 0x180D
+    .then (peripheral) =>
+      peripheral.get_characteristic(0x180D, 0x2A37)
+    .then (heart_rate_characteristic) =>
+      heart_rate_characteristic.subscribe (data) =>
+        console.log("Heart rate: #{data[1]} bpm")
+
+## API
+
+Unfortunately, the API is not documented yet, so there's very little reason for others to use it yet. I published it because other Node.js modules of mine require it.
