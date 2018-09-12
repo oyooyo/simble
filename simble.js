@@ -1,5 +1,5 @@
 'use strict';
-var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, convert_to_buffer, create_filter_function, debug_data, debug_event, ensure_noble_state, filter_types, first_valid_value, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, scan_for_peripheral, split_into_chunks, stop_scanning,
+var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, connect_to_peripheral, convert_to_buffer, create_filter_function, debug_data, debug_event, discover_peripheral, ensure_noble_state, filter_types, first_valid_value, get_timestamp_millis, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, scan_for_peripheral, split_into_chunks, stop_scanning, time_limit_promise,
   indexOf = [].indexOf;
 
 // Canonicalize hexadecimal string <hex_string> by removing all non-hexadecimal characters, and converting all hex digits to lower case
@@ -101,21 +101,24 @@ is_of_type = function(type_string) {
 // Returns true if the passed argument <value> is of type "function", false otherwise
 is_function_type = is_of_type('function');
 
-// Returns a filter function according to <options>. <options> must either be a function, in which case the function is simply returned, or an object like {"name":"btleperipheral", "services":[0x1827]}, with valid peripheral filter type ids as keys, and the parameter for that peripheral filter type as values.
+// Returns true if the passed argument <value> is neither null nor undefined
+is_valid_value = function(value) {
+  return !((value === void 0) || (value === null));
+};
+
+// Returns a filter function according to <options>. <options> must either be a function, in which case the function is simply returned, or an object like {"name":"btleperipheral", "services":[0x1827]}, with valid peripheral filter type ids as keys, and the parameter for that peripheral filter type as values. If one of the values is null or undefined, this sub filter will be skipped.
 create_filter_function = function(options) {
   var filter_type, filter_value, sub_filters;
   if (is_function_type(options)) {
     return options;
   }
-  sub_filters = (function() {
-    var results;
-    results = [];
-    for (filter_type in options) {
-      filter_value = options[filter_type];
-      results.push(filter_types[filter_type](filter_value));
+  sub_filters = [];
+  for (filter_type in options) {
+    filter_value = options[filter_type];
+    if (is_valid_value(filter_value)) {
+      sub_filters.push(filter_types[filter_type](filter_value));
     }
-    return results;
-  })();
+  }
   return function(peripheral) {
     var i, len, sub_filter;
     for (i = 0, len = sub_filters.length; i < len; i++) {
@@ -146,28 +149,19 @@ ensure_noble_state = function(noble_state_string) {
   });
 };
 
+// Convert a Buffer instance <buffer> to an array of byte integers
+buffer_to_byte_array = function(buffer) {
+  if (!is_valid_value(buffer)) {
+    return null;
+  }
+  return [...buffer];
+};
+
 // Debug log function for events
 debug_event = require('debug')('simble:event');
 
 // Import/Require the "events" module as EventEmitter
 EventEmitter = require('events');
-
-// The possible states a peripheral can have
-peripheral_states = {
-  disconnected: 1,
-  connected: 2,
-  discovered: 3
-};
-
-// Convert a Buffer instance <buffer> to an array of byte integers
-buffer_to_byte_array = function(buffer) {
-  return [...buffer];
-};
-
-// Returns true if the passed argument <value> is neither null nor undefined
-is_valid_value = function(value) {
-  return (value !== void 0) && (value !== null);
-};
 
 // Returns the first value in <values...> that is neither null nor undefined
 first_valid_value = function(...values) {
@@ -178,6 +172,18 @@ first_valid_value = function(...values) {
       return value;
     }
   }
+};
+
+// Returns the current timestamp, as milliseconds since the epoch
+get_timestamp_millis = function() {
+  return Date.now();
+};
+
+// The possible states a peripheral can have
+peripheral_states = {
+  DISCONNECTED: 1,
+  CONNECTED: 2,
+  DISCOVERED: 3
 };
 
 // Converts integer value <integer> into a zero-prefixed hexadecimal string of length <number_of_digits>
@@ -215,60 +221,94 @@ debug_data = require('debug')('simble:data');
 
 // This class represents a Bluetooth LE characteristic
 Characteristic = class extends EventEmitter {
-  constructor(noble_characteristic1, service1) {
+  // Constructor, instantiates a new Characteristic instance
+  constructor(noble_characteristic, service1) {
     super();
-    this.noble_characteristic = noble_characteristic1;
     this.service = service1;
-    this.uuid = canonicalize_bluetooth_uuid(this.noble_characteristic.uuid);
-    this.noble_characteristic.on('data', (data) => {
-      data = buffer_to_byte_array(data);
-      debug_data(`Characteristic ${this.uuid} : Receive "${byte_array_to_hex_string(data, ' ')}"`);
-      this.emit('data_received', data);
-    });
+    this.peripheral = this.service.peripheral;
+    this.set_noble_characteristic(noble_characteristic);
     return;
   }
 
+  // Set the noble peripheral that this Characteristic instance is a wrapper for
+  set_noble_characteristic(noble_characteristic) {
+    if (noble_characteristic !== this.noble_characteristic) {
+      this.noble_characteristic = noble_characteristic;
+      this.uuid = canonicalize_bluetooth_uuid(this.noble_characteristic.uuid);
+      this.noble_characteristic.on('data', (data) => {
+        data = buffer_to_byte_array(data);
+        this.peripheral.update_last_action_time();
+        debug_data(`Characteristic ${this.uuid} : Receive "${byte_array_to_hex_string(data, ' ')}"`);
+        this.emit('data_received', data);
+      });
+    }
+    return this;
+  }
+
+  // Emit the event <event_id>, with optional additional arguments
   emit(event_id) {
     debug_event(`Characteristic ${this.uuid} : Event "${event_id}"`);
     return super.emit(...arguments);
   }
 
+  // Ensure that the peripheral was discovered - returns a Promise that resolves once it is discovered
+  ensure_discovered() {
+    return this.service.ensure_discovered().then(() => {
+      return this;
+    });
+  }
+
+  // Alias for ensure_discovered()
+  discover() {
+    return this.ensure_discovered();
+  }
+
+  // Read the characteristic's current value. Returns a Promise that resolves to a byte array
   read() {
-    return new Promise((resolve, reject) => {
-      this.noble_characteristic.read((error, data) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve(buffer_to_byte_array(data));
-        }
+    return this.ensure_discovered().then(() => {
+      return new Promise((resolve, reject) => {
+        this.noble_characteristic.read((error, data) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(buffer_to_byte_array(data));
+          }
+        });
       });
     });
   }
 
+  // Set the characteristic's value to <data> (a byte array). If <without_response> is true, the characteristic will be written withour waiting for a response/confirmation. Returns a Promise that resolves if the characteristic was set/written
   write(data, without_response) {
-    data = convert_to_buffer(data);
-    without_response = first_valid_value(without_response, false);
-    debug_data(`Characteristic ${this.uuid} : Send "${byte_array_to_hex_string(data, ' ')}"`);
-    return new Promise((resolve, reject) => {
-      this.noble_characteristic.write(data, without_response, (error) => {
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
+    return this.ensure_discovered().then(() => {
+      data = convert_to_buffer(data);
+      without_response = first_valid_value(without_response, false);
+      this.peripheral.update_last_action_time();
+      debug_data(`Characteristic ${this.uuid} : Send "${byte_array_to_hex_string(data, ' ')}"`);
+      return new Promise((resolve, reject) => {
+        this.noble_characteristic.write(data, without_response, (error) => {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(this);
+          }
+        });
       });
     });
   }
 
+  // Subscribe to the characteristic. The <listener> function will be called with <data> (a byte array) argument whenever new data arrives. Returns a Promise that resolves if 
   subscribe(listener) {
-    return new Promise((resolve, reject) => {
-      this.noble_characteristic.subscribe((error) => {
-        if (error) {
-          reject(error);
-        } else {
-          this.addListener('data_received', listener);
-          resolve();
-        }
+    return this.ensure_discovered().then(() => {
+      return new Promise((resolve, reject) => {
+        this.noble_characteristic.subscribe((error) => {
+          if (error) {
+            reject(error);
+          } else {
+            this.addListener('data_received', listener);
+            resolve(this);
+          }
+        });
       });
     });
   }
@@ -277,40 +317,70 @@ Characteristic = class extends EventEmitter {
 
 // This class represents a Bluetooth LE service
 Service = class extends EventEmitter {
-  constructor(noble_service1, peripheral1) {
+  // Constructor, instantiates a new Service instance
+  constructor(noble_service, peripheral1) {
     super();
-    this.noble_service = noble_service1;
     this.peripheral = peripheral1;
-    this.uuid = canonicalize_bluetooth_uuid(this.noble_service.uuid);
-    this.update_characteristics();
+    this.set_noble_service(noble_service);
     return;
   }
 
+  // Set the noble service that this Service instance is a wrapper for
+  set_noble_service(noble_service) {
+    if (noble_service !== this.noble_service) {
+      this.noble_service = noble_service;
+      this.uuid = canonicalize_bluetooth_uuid(this.noble_service.uuid);
+    }
+    this.update_characteristics();
+    return this;
+  }
+
+  // Emit the event <event_id>, with optional additional arguments
   emit(event_id) {
     debug_event(`Service ${this.uuid} : Event "${event_id}"`);
     return super.emit(...arguments);
   }
 
+  // Update the list of Characteristics, reusing old Characteristic instances if possible
   update_characteristics() {
-    var i, len, noble_characteristic, ref;
+    var characteristic, characteristic_uuid, i, len, noble_characteristic, ref;
+    this.old_characteristics = first_valid_value(this.characteristics, {});
     this.characteristics = {};
     if (this.noble_service.characteristics) {
       ref = this.noble_service.characteristics;
       for (i = 0, len = ref.length; i < len; i++) {
         noble_characteristic = ref[i];
-        this.characteristics[canonicalize_bluetooth_uuid(noble_characteristic.uuid)] = new Characteristic(noble_characteristic, this);
+        characteristic_uuid = canonicalize_bluetooth_uuid(noble_characteristic.uuid);
+        characteristic = this.old_characteristics[characteristic_uuid];
+        if (is_valid_value(characteristic)) {
+          characteristic.set_noble_characteristic(noble_characteristic);
+        } else {
+          characteristic = new Characteristic(noble_characteristic, this);
+        }
+        this.characteristics[characteristic_uuid] = characteristic;
       }
     }
+    return this;
   }
 
+  // Ensure that the service was discovered - returns a Promise that resolves once it is discovered
   ensure_discovered() {
-    return this.peripheral.ensure_discovered();
+    return this.peripheral.ensure_discovered().then(() => {
+      return this;
+    });
   }
 
+  // Alias for ensure_discovered()
+  discover() {
+    return this.ensure_discovered();
+  }
+
+  // Synchronous version of get_characteristic() - requires that the peripheral was already discovered
   get_discovered_characteristic(characteristic_id) {
     return this.characteristics[canonicalize_bluetooth_uuid(characteristic_id)];
   }
 
+  // Asynchronous version of get_characteristic() - returns a Promise to the characteristic
   get_characteristic(characteristic_id) {
     return this.ensure_discovered().then(() => {
       return this.get_discovered_characteristic(characteristic_id);
@@ -324,71 +394,137 @@ Peripheral = (function() {
   var _Class;
 
   _Class = class extends EventEmitter {
-    constructor(noble_peripheral1) {
+    // Constructor, instantiates a new Peripheral instance
+    constructor(noble_peripheral) {
       super();
-      this.noble_peripheral = noble_peripheral1;
-      this.address = canonicalize_mac_address(this.noble_peripheral.address);
-      this.address_type = this.noble_peripheral.addressType;
-      this.advertisement = {
-        name: this.noble_peripheral.advertisement.localName,
-        service_uuids: this.noble_peripheral.advertisement.serviceUuids.map(canonicalize_bluetooth_uuid),
-        manufacturer_data: this.noble_peripheral.advertisement.manufacturerData
-      };
-      this.connectable = this.noble_peripheral.connectable;
-      this.rssi = this.noble_peripheral.rssi;
-      // TODO is this safe? could noble_peripheral already be connected?
-      this.set_state(peripheral_states.disconnected);
-      this.update_services();
-      this.noble_peripheral.on('connect', () => {
-        this.set_state(peripheral_states.connected);
-        this.emit('connected');
-      });
-      this.noble_peripheral.on('disconnect', () => {
-        this.set_state(peripheral_states.disconnected);
-        this.emit('disconnected');
-      });
-      this.noble_peripheral.on('rssiUpdate', (rssi) => {
-        this.rssi = rssi;
-        this.emit('rssi_update', rssi);
-      });
+      this.set_auto_disconnect_time(0);
+      this.set_noble_peripheral(noble_peripheral);
       return;
     }
 
+    // Update the "last_action_time"
+    update_last_action_time() {
+      return this.last_action_time = get_timestamp_millis();
+    }
+
+    // Set the auto-disconnect time to <auto_disconnect_millis> milliseconds. A value of 0 disables auto-disconnect
+    set_auto_disconnect_time(auto_disconnect_millis) {
+      this.auto_disconnect_millis = auto_disconnect_millis;
+      return this;
+    }
+
+    // Set the noble service that this Service instance is a wrapper for
+    set_noble_peripheral(noble_peripheral) {
+      var advertisement;
+      if (noble_peripheral !== this.noble_peripheral) {
+        this.noble_peripheral = noble_peripheral;
+        this.address = canonicalize_mac_address(this.noble_peripheral.address);
+        this.address_type = this.noble_peripheral.addressType;
+        advertisement = this.noble_peripheral.advertisement;
+        this.advertisement = {
+          manufacturer_data: buffer_to_byte_array(advertisement.manufacturerData),
+          name: advertisement.localName,
+          service_data: advertisement.serviceData.map(function(service_data) {
+            return {
+              uuid: canonicalize_bluetooth_uuid(service_data.uuid),
+              data: buffer_to_byte_array(service_data.data)
+            };
+          }),
+          service_solicitation_uuids: (advertisement.serviceSolicitationUuid ? advertisement.serviceSolicitationUuid.map(canonicalize_bluetooth_uuid) : []),
+          service_uuids: advertisement.serviceUuids.map(canonicalize_bluetooth_uuid),
+          tx_power_level: advertisement.txPowerLevel
+        };
+        this.connectable = this.noble_peripheral.connectable;
+        this.rssi = this.noble_peripheral.rssi;
+        this.noble_peripheral.on('connect', () => {
+          this.timer = setInterval(() => {
+            if ((this.auto_disconnect_millis > 0) && (get_timestamp_millis() >= (this.last_action_time + this.auto_disconnect_millis))) {
+              return this.ensure_disconnected();
+            }
+          }, 100);
+          this.set_state(peripheral_states.CONNECTED);
+          this.emit('connected');
+        });
+        this.noble_peripheral.on('disconnect', () => {
+          clearInterval(this.timer);
+          this.timer = null;
+          this.set_state(peripheral_states.DISCONNECTED);
+          this.emit('disconnected');
+        });
+        this.noble_peripheral.on('rssiUpdate', (rssi) => {
+          this.rssi = rssi;
+          this.emit('rssi_update', rssi);
+        });
+      }
+      // TODO better set state to actual state
+      this.set_state(peripheral_states.DISCONNECTED);
+      this.update_services();
+      return this;
+    }
+
+    // Emit the event <event_id>, with optional additional arguments
     emit(event_id) {
       debug_event(`Peripheral ${this.address} : Event "${event_id}"`);
       return super.emit(...arguments);
     }
 
+    // Set the current state to <state> (must be one of the values in Peripheral.states
     set_state(state) {
       if (state !== this.state) {
+        this.update_last_action_time();
         this.state = state;
-        this.is_connected = state >= peripheral_states.connected;
-        this.is_discovered = state >= peripheral_states.discovered;
+        this.is_connected = state >= peripheral_states.CONNECTED;
+        this.is_discovered = state >= peripheral_states.DISCOVERED;
       }
+      return this;
     }
 
+    // Update the RSSI (Received Signal Strength Indicator). Returns a Promise that resolves to the current RSSI value
+    update_rssi() {
+      return new Promise((resolve, reject) => {
+        this.noble_peripheral.updateRssi(function(error, rssi) {
+          if (error) {
+            reject(error);
+          } else {
+            resolve(rssi);
+          }
+        });
+      });
+    }
+
+    // Update the list of services, reusing old Service instances if possible
     update_services() {
-      var i, len, noble_service, ref;
+      var i, len, noble_service, ref, service, service_uuid;
+      this.old_services = first_valid_value(this.services, {});
       this.services = {};
       if (this.noble_peripheral.services) {
         ref = this.noble_peripheral.services;
         for (i = 0, len = ref.length; i < len; i++) {
           noble_service = ref[i];
-          this.services[canonicalize_bluetooth_uuid(noble_service.uuid)] = new Service(noble_service, this);
+          service_uuid = canonicalize_bluetooth_uuid(noble_service.uuid);
+          service = this.old_services[service_uuid];
+          if (is_valid_value(service)) {
+            service.set_noble_service(noble_service);
+          } else {
+            service = new Service(noble_service, this);
+          }
+          this.services[service_uuid] = service;
         }
       }
+      return this;
     }
 
+    // Ensure the peripheral is disconnected. Returns a Promise that resolves once the peripheral is disconnected
     ensure_disconnected() {
       return new Promise((resolve, reject) => {
         if (!this.is_connected) {
-          resolve();
+          resolve(this);
         } else {
           this.noble_peripheral.disconnect((error) => {
             if (error) {
               reject(error);
             } else {
-              resolve();
+              resolve(this);
             }
           });
         }
@@ -400,16 +536,17 @@ Peripheral = (function() {
       return this.ensure_disconnected();
     }
 
+    // Ensure the peripheral is connected. Returns a Promise that resolves once the peripheral is connected
     ensure_connected() {
       return new Promise((resolve, reject) => {
         if (this.is_connected) {
-          resolve();
+          resolve(this);
         } else {
           this.noble_peripheral.connect((error) => {
             if (error) {
               reject(error);
             } else {
-              resolve();
+              resolve(this);
             }
           });
         }
@@ -421,20 +558,21 @@ Peripheral = (function() {
       return this.ensure_connected();
     }
 
+    // Ensure the peripheral is discovered. Returns a Promise that resolves once the peripheral is discovered
     ensure_discovered() {
       return this.ensure_connected().then(() => {
         return new Promise((resolve, reject) => {
           if (this.is_discovered) {
-            resolve();
+            resolve(this);
           } else {
             this.noble_peripheral.discoverAllServicesAndCharacteristics((error) => {
               if (error) {
                 reject(error);
               } else {
                 this.update_services();
-                this.set_state(peripheral_states.discovered);
+                this.set_state(peripheral_states.DISCOVERED);
                 this.emit('discovered');
-                resolve();
+                resolve(this);
               }
             });
           }
@@ -447,25 +585,35 @@ Peripheral = (function() {
       return this.ensure_discovered();
     }
 
+    // Synchronous version of get_service() - requires that the peripheral was already discovered
     get_discovered_service(service_id) {
       return this.services[canonicalize_bluetooth_uuid(service_id)];
     }
 
+    // Asynchronous version of get_service() - returns a Promise to the service
     get_service(service_id) {
       return this.ensure_discovered().then(() => {
         return this.get_discovered_service(service_id);
       });
     }
 
+    // Synchronous version of get_characteristic() - requires that the peripheral was already discovered
+    get_discovered_characteristic(service_id, characteristic_id) {
+      return this.get_discovered_service(service_id).get_discovered_characteristic(characteristic_id); 
+    }
+
+    
+    // Asynchronous version of get_characteristic() - returns a Promise to the characteristic
     get_characteristic(service_id, characteristic_id) {
-      return this.get_service(service_id).then(function(service) {
-        return service.get_characteristic(characteristic_id);
+      return this.ensure_discovered().then(() => {
+        return this.get_discovered_characteristic(service_id, characteristic_id);
       });
     }
 
   };
 
-  _Class.states = peripheral_states;
+  // The possible states a peripheral can have
+  _Class.STATES = peripheral_states;
 
   return _Class;
 
@@ -489,6 +637,20 @@ scan_for_peripheral = function(peripheral_filter) {
   });
 };
 
+// Scan for a peripheral that matches the filter <peripheral_filter> and connect to it. Returns a Promise that resolves to the peripheral
+connect_to_peripheral = function(peripheral_filter) {
+  return scan_for_peripheral(peripheral_filter).then(function(peripheral) {
+    return peripheral.ensure_connected();
+  });
+};
+
+// Scan for a peripheral that matches the filter <peripheral_filter>, connect and discover it. Returns a Promise that resolves to the peripheral
+discover_peripheral = function(peripheral_filter) {
+  return scan_for_peripheral(peripheral_filter).then(function(peripheral) {
+    return peripheral.ensure_discovered();
+  });
+};
+
 // Stop scanning for peripherals. Returns a Promise that resolves if the scanning has stopped.
 stop_scanning = function() {
   return new Promise(function(resolve, reject) {
@@ -499,15 +661,41 @@ stop_scanning = function() {
   });
 };
 
+// Returns a promise that is a time-limited wrapper for promise <promise>. If the promise <promise> does not resolve within <time_limit> microseconds, the promise is rejected
+time_limit_promise = function(promise, time_limit, timeout_error_message) {
+  if (time_limit === 0) {
+    return promise;
+  }
+  timeout_error_message = first_valid_value(timeout_error_message, 'Promise did not resolve within time');
+  return new Promise(function(resolve, reject) {
+    var timeout;
+    timeout = setTimeout(function() {
+      reject(timeout_error_message);
+    }, time_limit);
+    Promise.resolve(promise).then(function(promise_result) {
+      clearTimeout(timeout);
+      resolve(promise_result);
+    }).catch(function(promise_error) {
+      clearTimeout(timeout);
+      reject(promise_error);
+    });
+  });
+};
+
 // What this module exports
 module.exports = {
   canonicalize: {
     address: canonicalize_mac_address,
     bluetooth_uuid: canonicalize_bluetooth_uuid
   },
+  connect_to_peripheral: connect_to_peripheral,
+  discover_peripheral: discover_peripheral,
   filter: filter_types,
   scan_for_peripheral: scan_for_peripheral,
-  stop_scanning: stop_scanning
+  stop_scanning: stop_scanning,
+  utils: {
+    time_limit_promise: time_limit_promise
+  }
 };
 
 //# sourceMappingURL=simble.js.map

@@ -31,3 +31,7 @@ Updated README.
 - Improved the source code
 - Removed some pointless functions
 - Added some debug output (Enable with `DEBUG=simble:*`)
+
+## v0.2.1 *(2018/09/12)*
+
+- Some further improvements, like the ability to set auto-disconnect timeouts
