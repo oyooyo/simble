@@ -546,10 +546,12 @@ Peripheral = (function() {
         if (this.is_connected) {
           resolve(this);
         } else {
+          debug_info(`Connecting to peripheral ${this.address}...`);
           this.noble_peripheral.connect((error) => {
             if (error) {
               reject(error);
             } else {
+              debug_info(`Connected to peripheral ${this.address}`);
               resolve(this);
             }
           });
@@ -569,25 +571,26 @@ Peripheral = (function() {
           if (this.is_discovered) {
             resolve(this);
           } else {
+            debug_info(`Discovering peripheral ${this.address}...`);
             this.noble_peripheral.discoverAllServicesAndCharacteristics((error) => {
-              var characteristic, i, j, len, len1, ref, ref1, service;
+              var characteristic, characteristic_uuid, ref, ref1, service, service_uuid;
               if (error) {
                 reject(error);
               } else {
                 this.update_services();
-                this.set_state(peripheral_states.DISCOVERED);
-                this.emit('discovered');
                 debug_info(`Peripheral ${this.address} discovered:`);
                 ref = this.services;
-                for (i = 0, len = ref.length; i < len; i++) {
-                  service = ref[i];
+                for (service_uuid in ref) {
+                  service = ref[service_uuid];
                   debug_info(`  Service ${service.uuid}`);
                   ref1 = service.characteristics;
-                  for (j = 0, len1 = ref1.length; j < len1; j++) {
-                    characteristic = ref1[j];
+                  for (characteristic_uuid in ref1) {
+                    characteristic = ref1[characteristic_uuid];
                     debug_info(`    Characteristic ${characteristic.uuid} (${characteristic.properties.join(', ')})`);
                   }
                 }
+                this.set_state(peripheral_states.DISCOVERED);
+                this.emit('discovered');
                 resolve(this);
               }
             });
@@ -643,7 +646,7 @@ scan_for_peripheral = function(peripheral_filter) {
       noble.on('discover', function(noble_peripheral) {
         var peripheral;
         peripheral = new Peripheral(noble_peripheral);
-        debug_info(`  Scanned peripheral ${peripheral.address} (Name:"${peripheral.advertisement.name}", Services:[${peripheral.advertisement.service_uuids.join(', ')}])`);
+        debug_info(`  Scanned peripheral ${peripheral.address} (Name:"${peripheral.advertisement.name}", advertised services:[${peripheral.advertisement.service_uuids.join(', ')}])`);
         if (peripheral_filter(peripheral)) {
           debug_info(`Peripheral ${peripheral.address} matches filters, stopping scanning`);
           noble.stopScanning();

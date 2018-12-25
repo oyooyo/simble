@@ -418,10 +418,12 @@ Peripheral = class extends EventEmitter
 			if @is_connected
 				resolve(@)
 			else
+				debug_info "Connecting to peripheral #{@address}..."
 				@noble_peripheral.connect (error) =>
 					if error
 						reject(error)
 					else
+						debug_info "Connected to peripheral #{@address}"
 						resolve(@)
 					return
 			return
@@ -438,18 +440,19 @@ Peripheral = class extends EventEmitter
 				if @is_discovered
 					resolve(@)
 				else
+					debug_info "Discovering peripheral #{@address}..."
 					@noble_peripheral.discoverAllServicesAndCharacteristics (error) =>
 						if error
 							reject(error)
 						else
 							@update_services()
+							debug_info "Peripheral #{@address} discovered:"
+							for service_uuid, service of @services
+								debug_info "  Service #{service.uuid}"
+								for characteristic_uuid, characteristic of service.characteristics
+									debug_info "    Characteristic #{characteristic.uuid} (#{characteristic.properties.join(', ')})"
 							@set_state(peripheral_states.DISCOVERED)
 							@emit 'discovered'
-							debug_info "Peripheral #{@address} discovered:"
-							for service in @services
-								debug_info "  Service #{service.uuid}"
-								for characteristic in service.characteristics
-									debug_info "    Characteristic #{characteristic.uuid} (#{characteristic.properties.join(', ')})"
 							resolve(@)
 						return
 				return
@@ -486,7 +489,7 @@ scan_for_peripheral = (peripheral_filter) ->
 		new Promise (resolve, reject) ->
 			noble.on 'discover', (noble_peripheral) ->
 				peripheral = new Peripheral(noble_peripheral)
-				debug_info "  Scanned peripheral #{peripheral.address} (Name:\"#{peripheral.advertisement.name}\", Services:[#{peripheral.advertisement.service_uuids.join(', ')}])"
+				debug_info "  Scanned peripheral #{peripheral.address} (Name:\"#{peripheral.advertisement.name}\", advertised services:[#{peripheral.advertisement.service_uuids.join(', ')}])"
 				if peripheral_filter(peripheral)
 					debug_info "Peripheral #{peripheral.address} matches filters, stopping scanning"
 					noble.stopScanning()

@@ -40,3 +40,7 @@ Updated README.
 
 - Removed package-lock.json for now, because I don't fully comprehend it and that may have caused some issues
 - Added some more debug messages
+
+## v0.2.3 *(2018/12/25)*
+
+- Fixed some errors in the v0.2.2 changes
