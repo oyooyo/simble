@@ -86,6 +86,9 @@ create_filter_function = (options) ->
 				return false
 		true
 
+# Debug log function for info
+debug_info = require('debug')('simble:info')
+
 # Import/Require the "noble" module for Bluetooth LE communication
 noble = require('noble')
 
@@ -164,6 +167,7 @@ Characteristic = class extends EventEmitter
 		if (noble_characteristic isnt @noble_characteristic)
 			@noble_characteristic = noble_characteristic
 			@uuid = canonicalize_bluetooth_uuid(@noble_characteristic.uuid)
+			@properties = noble_characteristic.properties
 			@noble_characteristic.on 'data', (data) =>
 				data = buffer_to_byte_array(data)
 				@peripheral.update_last_action_time()
@@ -441,6 +445,11 @@ Peripheral = class extends EventEmitter
 							@update_services()
 							@set_state(peripheral_states.DISCOVERED)
 							@emit 'discovered'
+							debug_info "Peripheral #{@address} discovered:"
+							for service in @services
+								debug_info "  Service #{service.uuid}"
+								for characteristic in service.characteristics
+									debug_info "    Characteristic #{characteristic.uuid} (#{characteristic.properties.join(', ')})"
 							resolve(@)
 						return
 				return
@@ -477,10 +486,13 @@ scan_for_peripheral = (peripheral_filter) ->
 		new Promise (resolve, reject) ->
 			noble.on 'discover', (noble_peripheral) ->
 				peripheral = new Peripheral(noble_peripheral)
+				debug_info "  Scanned peripheral #{peripheral.address} (Name:\"#{peripheral.advertisement.name}\", Services:[#{peripheral.advertisement.service_uuids.join(', ')}])"
 				if peripheral_filter(peripheral)
+					debug_info "Peripheral #{peripheral.address} matches filters, stopping scanning"
 					noble.stopScanning()
 					resolve(peripheral)
 				return
+			debug_info "Starting to scan for peripheral..."
 			noble.startScanning()
 			return
 

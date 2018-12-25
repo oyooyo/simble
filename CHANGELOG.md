@@ -35,3 +35,8 @@ Updated README.
 ## v0.2.1 *(2018/09/12)*
 
 - Some further improvements, like the ability to set auto-disconnect timeouts
+
+## v0.2.2 *(2018/12/25)*
+
+- Removed package-lock.json for now, because I don't fully comprehend it and that may have caused some issues
+- Added some more debug messages

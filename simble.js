@@ -1,5 +1,5 @@
 'use strict';
-var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, connect_to_peripheral, convert_to_buffer, create_filter_function, debug_data, debug_event, discover_peripheral, ensure_noble_state, filter_types, first_valid_value, get_timestamp_millis, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, scan_for_peripheral, split_into_chunks, stop_scanning, time_limit_promise,
+var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, connect_to_peripheral, convert_to_buffer, create_filter_function, debug_data, debug_event, debug_info, discover_peripheral, ensure_noble_state, filter_types, first_valid_value, get_timestamp_millis, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, scan_for_peripheral, split_into_chunks, stop_scanning, time_limit_promise,
   indexOf = [].indexOf;
 
 // Canonicalize hexadecimal string <hex_string> by removing all non-hexadecimal characters, and converting all hex digits to lower case
@@ -131,6 +131,9 @@ create_filter_function = function(options) {
   };
 };
 
+// Debug log function for info
+debug_info = require('debug')('simble:info');
+
 // Import/Require the "noble" module for Bluetooth LE communication
 noble = require('noble');
 
@@ -235,6 +238,7 @@ Characteristic = class extends EventEmitter {
     if (noble_characteristic !== this.noble_characteristic) {
       this.noble_characteristic = noble_characteristic;
       this.uuid = canonicalize_bluetooth_uuid(this.noble_characteristic.uuid);
+      this.properties = noble_characteristic.properties;
       this.noble_characteristic.on('data', (data) => {
         data = buffer_to_byte_array(data);
         this.peripheral.update_last_action_time();
@@ -566,12 +570,24 @@ Peripheral = (function() {
             resolve(this);
           } else {
             this.noble_peripheral.discoverAllServicesAndCharacteristics((error) => {
+              var characteristic, i, j, len, len1, ref, ref1, service;
               if (error) {
                 reject(error);
               } else {
                 this.update_services();
                 this.set_state(peripheral_states.DISCOVERED);
                 this.emit('discovered');
+                debug_info(`Peripheral ${this.address} discovered:`);
+                ref = this.services;
+                for (i = 0, len = ref.length; i < len; i++) {
+                  service = ref[i];
+                  debug_info(`  Service ${service.uuid}`);
+                  ref1 = service.characteristics;
+                  for (j = 0, len1 = ref1.length; j < len1; j++) {
+                    characteristic = ref1[j];
+                    debug_info(`    Characteristic ${characteristic.uuid} (${characteristic.properties.join(', ')})`);
+                  }
+                }
                 resolve(this);
               }
             });
@@ -627,11 +643,14 @@ scan_for_peripheral = function(peripheral_filter) {
       noble.on('discover', function(noble_peripheral) {
         var peripheral;
         peripheral = new Peripheral(noble_peripheral);
+        debug_info(`  Scanned peripheral ${peripheral.address} (Name:"${peripheral.advertisement.name}", Services:[${peripheral.advertisement.service_uuids.join(', ')}])`);
         if (peripheral_filter(peripheral)) {
+          debug_info(`Peripheral ${peripheral.address} matches filters, stopping scanning`);
           noble.stopScanning();
           resolve(peripheral);
         }
       });
+      debug_info("Starting to scan for peripheral...");
       noble.startScanning();
     });
   });
