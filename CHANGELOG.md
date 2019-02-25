@@ -2,15 +2,15 @@
 
 ## v0.0.1
 
-Initial, barely usable version.
+- Initial, barely usable version.
 
 ## v0.0.3
 
-First somewhat usable version.
+- First somewhat usable version.
 
 ## v0.0.4
 
-Updated README.
+- Updated README
 
 ## v0.0.5
 
@@ -44,3 +44,13 @@ Updated README.
 ## v0.2.3 *(2018/12/25)*
 
 - Fixed some errors in the v0.2.2 changes
+
+## v0.2.4 *(2019/01/05)*
+
+- (Hopefully) fixed some severe bugs that made simble interfere with other BLE devices
+
+## v0.2.5 *(2019/02/25)*
+
+- Switched underlying noble library to [abandonware fork](https://github.com/abandonware/noble) since the original noble seems to have become unmaintained
+- Added some more convenience functions
+- Updated the example in the README

@@ -1,5 +1,5 @@
 'use strict';
-var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, connect_to_peripheral, convert_to_buffer, create_filter_function, debug_data, debug_event, debug_info, discover_peripheral, ensure_noble_state, filter_types, first_valid_value, get_timestamp_millis, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, scan_for_peripheral, split_into_chunks, stop_scanning, time_limit_promise,
+var Characteristic, EventEmitter, Peripheral, Service, address_filter, advertised_services_filter, buffer_to_byte_array, byte_array_to_hex_string, canonicalize_bluetooth_uuid, canonicalize_hex_string, canonicalize_mac_address, canonicalize_uuid, connect_to_characteristic, connect_to_peripheral, connect_to_service, convert_to_buffer, create_filter_function, debug_data, debug_event, debug_info, discover_peripheral, ensure_noble_state, filter_types, first_valid_value, get_timestamp_millis, integer_to_zero_prefixed_hex_string, is_array, is_function_type, is_of_type, is_valid_value, name_filter, noble, peripheral_states, publish_to_characteristic, register_temporary_event_listener, scan_for_peripheral, split_into_chunks, stop_scanning, subscribe_to_characteristic, time_limit_promise,
   indexOf = [].indexOf;
 
 // Canonicalize hexadecimal string <hex_string> by removing all non-hexadecimal characters, and converting all hex digits to lower case
@@ -137,15 +137,30 @@ debug_info = require('debug')('simble:info');
 // Import/Require the "noble" module for Bluetooth LE communication
 noble = require('noble');
 
+// Register a temporary event listener <event_listener> for event <event_name> on event emitter <event_emitter>.
+// If the event emitter returns the boolean value true, the event listener will be removed
+register_temporary_event_listener = function(event_emitter, event_name, event_listener) {
+  var event_listener_proxy;
+  event_listener_proxy = function(...event_args) {
+    var event_listener_return_value;
+    event_listener_return_value = event_listener(...event_args);
+    if (event_listener_return_value === true) {
+      event_emitter.removeListener(event_name, event_listener_proxy);
+    }
+  };
+  event_emitter.on(event_name, event_listener_proxy);
+};
+
 // Returns a promise that resolves is the state is noble is <noble_state_string>
 ensure_noble_state = function(noble_state_string) {
   return new Promise(function(resolve, reject) {
     if (noble.state === noble_state_string) {
       resolve();
     } else {
-      noble.on('stateChange', function(state) {
+      register_temporary_event_listener(noble, 'stateChange', function(state) {
         if (state === noble_state_string) {
           resolve();
+          return true;
         }
       });
     }
@@ -239,12 +254,6 @@ Characteristic = class extends EventEmitter {
       this.noble_characteristic = noble_characteristic;
       this.uuid = canonicalize_bluetooth_uuid(this.noble_characteristic.uuid);
       this.properties = noble_characteristic.properties;
-      this.noble_characteristic.on('data', (data) => {
-        data = buffer_to_byte_array(data);
-        this.peripheral.update_last_action_time();
-        debug_data(`Characteristic ${this.uuid} : Receive "${byte_array_to_hex_string(data, ' ')}"`);
-        this.emit('data_received', data);
-      });
     }
     return this;
   }
@@ -309,6 +318,12 @@ Characteristic = class extends EventEmitter {
           if (error) {
             reject(error);
           } else {
+            this.noble_characteristic.on('data', (data) => {
+              data = buffer_to_byte_array(data);
+              this.peripheral.update_last_action_time();
+              debug_data(`Characteristic ${this.uuid} : Receive "${byte_array_to_hex_string(data, ' ')}"`);
+              this.emit('data_received', data);
+            });
             this.addListener('data_received', listener);
             resolve(this);
           }
@@ -421,48 +436,32 @@ Peripheral = (function() {
     set_noble_peripheral(noble_peripheral) {
       var advertisement;
       if (noble_peripheral !== this.noble_peripheral) {
+        //if (@noble_peripheral isnt null)
         this.noble_peripheral = noble_peripheral;
-        this.address = canonicalize_mac_address(this.noble_peripheral.address);
-        this.address_type = this.noble_peripheral.addressType;
-        advertisement = this.noble_peripheral.advertisement;
-        this.advertisement = {
-          manufacturer_data: buffer_to_byte_array(advertisement.manufacturerData),
-          name: advertisement.localName,
-          service_data: advertisement.serviceData.map(function(service_data) {
-            return {
-              uuid: canonicalize_bluetooth_uuid(service_data.uuid),
-              data: buffer_to_byte_array(service_data.data)
-            };
-          }),
-          service_solicitation_uuids: (advertisement.serviceSolicitationUuid ? advertisement.serviceSolicitationUuid.map(canonicalize_bluetooth_uuid) : []),
-          service_uuids: advertisement.serviceUuids.map(canonicalize_bluetooth_uuid),
-          tx_power_level: advertisement.txPowerLevel
-        };
-        this.connectable = this.noble_peripheral.connectable;
-        this.rssi = this.noble_peripheral.rssi;
-        this.noble_peripheral.on('connect', () => {
-          this.timer = setInterval(() => {
-            if ((this.auto_disconnect_millis > 0) && (get_timestamp_millis() >= (this.last_action_time + this.auto_disconnect_millis))) {
-              return this.ensure_disconnected();
-            }
-          }, 100);
-          this.set_state(peripheral_states.CONNECTED);
-          this.emit('connected');
-        });
-        this.noble_peripheral.on('disconnect', () => {
-          clearInterval(this.timer);
-          this.timer = null;
-          this.set_state(peripheral_states.DISCONNECTED);
-          this.emit('disconnected');
-        });
-        this.noble_peripheral.on('rssiUpdate', (rssi) => {
-          this.rssi = rssi;
-          this.emit('rssi_update', rssi);
-        });
+        if (noble_peripheral !== null) {
+          this.address = canonicalize_mac_address(this.noble_peripheral.address);
+          this.address_type = this.noble_peripheral.addressType;
+          advertisement = this.noble_peripheral.advertisement;
+          this.advertisement = {
+            manufacturer_data: buffer_to_byte_array(advertisement.manufacturerData),
+            name: advertisement.localName,
+            service_data: advertisement.serviceData.map(function(service_data) {
+              return {
+                uuid: canonicalize_bluetooth_uuid(service_data.uuid),
+                data: buffer_to_byte_array(service_data.data)
+              };
+            }),
+            service_solicitation_uuids: (advertisement.serviceSolicitationUuid ? advertisement.serviceSolicitationUuid.map(canonicalize_bluetooth_uuid) : []),
+            service_uuids: advertisement.serviceUuids.map(canonicalize_bluetooth_uuid),
+            tx_power_level: advertisement.txPowerLevel
+          };
+          this.connectable = this.noble_peripheral.connectable;
+          this.rssi = this.noble_peripheral.rssi;
+          this.update_services();
+        }
       }
       // TODO better set state to actual state
       this.set_state(peripheral_states.DISCONNECTED);
-      this.update_services();
       return this;
     }
 
@@ -551,6 +550,20 @@ Peripheral = (function() {
             if (error) {
               reject(error);
             } else {
+              this.timer = setInterval(() => {
+                if ((this.auto_disconnect_millis > 0) && (get_timestamp_millis() >= (this.last_action_time + this.auto_disconnect_millis))) {
+                  return this.ensure_disconnected();
+                }
+              }, 100);
+              this.set_state(peripheral_states.CONNECTED);
+              this.emit('connected');
+              this.noble_peripheral.once('disconnect', () => {
+                clearInterval(this.timer);
+                this.timer = null;
+                this.set_noble_peripheral(null);
+                this.set_state(peripheral_states.DISCONNECTED);
+                this.emit('disconnected');
+              });
               debug_info(`Connected to peripheral ${this.address}`);
               resolve(this);
             }
@@ -643,7 +656,7 @@ scan_for_peripheral = function(peripheral_filter) {
   peripheral_filter = create_filter_function(peripheral_filter);
   return ensure_noble_state('poweredOn').then(function() {
     return new Promise(function(resolve, reject) {
-      noble.on('discover', function(noble_peripheral) {
+      register_temporary_event_listener(noble, 'discover', function(noble_peripheral) {
         var peripheral;
         peripheral = new Peripheral(noble_peripheral);
         debug_info(`  Scanned peripheral ${peripheral.address} (Name:"${peripheral.advertisement.name}", advertised services:[${peripheral.advertisement.service_uuids.join(', ')}])`);
@@ -651,11 +664,28 @@ scan_for_peripheral = function(peripheral_filter) {
           debug_info(`Peripheral ${peripheral.address} matches filters, stopping scanning`);
           noble.stopScanning();
           resolve(peripheral);
+          return true;
         }
       });
       debug_info("Starting to scan for peripheral...");
       noble.startScanning();
     });
+  });
+};
+
+// Scan for a peripheral advertising the service with ID <service_id> and connect to it. Returns a Promise that resolves to that service
+connect_to_service = function(service_id) {
+  return scan_for_peripheral({
+    service: service_id
+  }).then(function(peripheral) {
+    return peripheral.get_service(service_id);
+  });
+};
+
+// Scan for a peripheral advertising the service with ID <service_id> and connect to it. Returns a Promise that resolves to the characteristic with ID <characteristic_id> of that service
+connect_to_characteristic = function(service_id, characteristic_id) {
+  return connect_to_service(service_id).then(function(service) {
+    return service.get_characteristic(characteristic_id);
   });
 };
 
@@ -673,13 +703,28 @@ discover_peripheral = function(peripheral_filter) {
   });
 };
 
+// Scan for a peripheral advertising the service with ID <service_id> and connect to it. Publish the data <data> to the characteristic with ID <characteristic_id> of that service. If <without_response> is set to true, the data will be published without requiring a confirmation response. Returns a Promise that resolves when the data was published
+publish_to_characteristic = function(service_id, characteristic_id, data, without_response) {
+  return connect_to_characteristic(service_id, characteristic_id).then(function(characteristic) {
+    return characteristic.write(data, without_response);
+  });
+};
+
 // Stop scanning for peripherals. Returns a Promise that resolves if the scanning has stopped.
 stop_scanning = function() {
   return new Promise(function(resolve, reject) {
     noble.once('scanStop', function() {
+      //noble.removeAllListeners('discover')
       resolve();
     });
     noble.stopScanning();
+  });
+};
+
+// Scan for a peripheral advertising the service with ID <service_id> and connect to it. Subscribe to the characteristic with ID <characteristic_id> of that service. Returns a Promise that resolves when the subscribing was successful
+subscribe_to_characteristic = function(service_id, characteristic_id, subscriber_callback) {
+  return connect_to_characteristic(service_id, characteristic_id).then(function(characteristic) {
+    return characteristic.subscribe(subscriber_callback);
   });
 };
 
@@ -710,11 +755,20 @@ module.exports = {
     address: canonicalize_mac_address,
     bluetooth_uuid: canonicalize_bluetooth_uuid
   },
+  connect: {
+    characteristic: connect_to_characteristic,
+    peripheral: connect_to_peripheral,
+    service: connect_to_service
+  },
+  connect_to_characteristic: connect_to_characteristic,
   connect_to_peripheral: connect_to_peripheral,
+  connect_to_service: connect_to_service,
   discover_peripheral: discover_peripheral,
   filter: filter_types,
+  publish_to_characteristic: publish_to_characteristic,
   scan_for_peripheral: scan_for_peripheral,
   stop_scanning: stop_scanning,
+  subscribe_to_characteristic: subscribe_to_characteristic,
   utils: {
     time_limit_promise: time_limit_promise
   }

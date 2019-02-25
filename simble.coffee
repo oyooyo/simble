@@ -92,15 +92,27 @@ debug_info = require('debug')('simble:info')
 # Import/Require the "noble" module for Bluetooth LE communication
 noble = require('noble')
 
+# Register a temporary event listener <event_listener> for event <event_name> on event emitter <event_emitter>.
+# If the event emitter returns the boolean value true, the event listener will be removed
+register_temporary_event_listener = (event_emitter, event_name, event_listener) ->
+	event_listener_proxy = (event_args...) ->
+		event_listener_return_value = event_listener(event_args...)
+		if (event_listener_return_value is true)
+			event_emitter.removeListener(event_name, event_listener_proxy)
+		return
+	event_emitter.on(event_name, event_listener_proxy)
+	return
+
 # Returns a promise that resolves is the state is noble is <noble_state_string>
 ensure_noble_state = (noble_state_string) ->
 	new Promise (resolve, reject) ->
 		if (noble.state is noble_state_string)
 			resolve()
 		else
-			noble.on 'stateChange', (state) ->
+			register_temporary_event_listener noble, 'stateChange', (state) ->
 				if (state is noble_state_string)
 					resolve()
+					return true
 				return
 		return
 
@@ -168,12 +180,6 @@ Characteristic = class extends EventEmitter
 			@noble_characteristic = noble_characteristic
 			@uuid = canonicalize_bluetooth_uuid(@noble_characteristic.uuid)
 			@properties = noble_characteristic.properties
-			@noble_characteristic.on 'data', (data) =>
-				data = buffer_to_byte_array(data)
-				@peripheral.update_last_action_time()
-				debug_data "Characteristic #{@uuid} : Receive \"#{byte_array_to_hex_string(data, ' ')}\""
-				@emit('data_received', data)
-				return
 		@
 
 	# Emit the event <event_id>, with optional additional arguments
@@ -230,6 +236,12 @@ Characteristic = class extends EventEmitter
 					if error
 						reject(error)
 					else
+						@noble_characteristic.on 'data', (data) =>
+							data = buffer_to_byte_array(data)
+							@peripheral.update_last_action_time()
+							debug_data "Characteristic #{@uuid} : Receive \"#{byte_array_to_hex_string(data, ' ')}\""
+							@emit('data_received', data)
+							return
 						@addListener('data_received', listener)
 						resolve(@)
 					return
@@ -316,42 +328,26 @@ Peripheral = class extends EventEmitter
 	# Set the noble service that this Service instance is a wrapper for
 	set_noble_peripheral: (noble_peripheral) ->
 		if (noble_peripheral isnt @noble_peripheral)
+			#if (@noble_peripheral isnt null)
 			@noble_peripheral = noble_peripheral
-			@address = canonicalize_mac_address(@noble_peripheral.address)
-			@address_type = @noble_peripheral.addressType
-			advertisement = @noble_peripheral.advertisement
-			@advertisement =
-				manufacturer_data: buffer_to_byte_array(advertisement.manufacturerData)
-				name: advertisement.localName
-				service_data: advertisement.serviceData.map (service_data) ->
-					uuid: canonicalize_bluetooth_uuid(service_data.uuid)
-					data: buffer_to_byte_array(service_data.data)
-				service_solicitation_uuids: (if advertisement.serviceSolicitationUuid then advertisement.serviceSolicitationUuid.map(canonicalize_bluetooth_uuid) else [])
-				service_uuids: advertisement.serviceUuids.map(canonicalize_bluetooth_uuid)
-				tx_power_level: advertisement.txPowerLevel
-			@connectable = @noble_peripheral.connectable
-			@rssi = @noble_peripheral.rssi
-			@noble_peripheral.on 'connect', =>
-				@timer = setInterval =>
-						if ((@auto_disconnect_millis > 0) and (get_timestamp_millis() >= (@last_action_time + @auto_disconnect_millis)))
-							@ensure_disconnected()
-					, 100
-				@set_state(peripheral_states.CONNECTED)
-				@emit 'connected'
-				return
-			@noble_peripheral.on 'disconnect', =>
-				clearInterval(@timer)
-				@timer = null
-				@set_state(peripheral_states.DISCONNECTED)
-				@emit 'disconnected'
-				return
-			@noble_peripheral.on 'rssiUpdate', (rssi) =>
-				@rssi = rssi
-				@emit 'rssi_update', rssi
-				return
+			if (noble_peripheral isnt null)
+				@address = canonicalize_mac_address(@noble_peripheral.address)
+				@address_type = @noble_peripheral.addressType
+				advertisement = @noble_peripheral.advertisement
+				@advertisement =
+					manufacturer_data: buffer_to_byte_array(advertisement.manufacturerData)
+					name: advertisement.localName
+					service_data: advertisement.serviceData.map (service_data) ->
+						uuid: canonicalize_bluetooth_uuid(service_data.uuid)
+						data: buffer_to_byte_array(service_data.data)
+					service_solicitation_uuids: (if advertisement.serviceSolicitationUuid then advertisement.serviceSolicitationUuid.map(canonicalize_bluetooth_uuid) else [])
+					service_uuids: advertisement.serviceUuids.map(canonicalize_bluetooth_uuid)
+					tx_power_level: advertisement.txPowerLevel
+				@connectable = @noble_peripheral.connectable
+				@rssi = @noble_peripheral.rssi
+				@update_services()
 		# TODO better set state to actual state
 		@set_state(peripheral_states.DISCONNECTED)
-		@update_services()
 		@
 
 	# Emit the event <event_id>, with optional additional arguments
@@ -423,6 +419,19 @@ Peripheral = class extends EventEmitter
 					if error
 						reject(error)
 					else
+						@timer = setInterval =>
+								if ((@auto_disconnect_millis > 0) and (get_timestamp_millis() >= (@last_action_time + @auto_disconnect_millis)))
+									@ensure_disconnected()
+							, 100
+						@set_state(peripheral_states.CONNECTED)
+						@emit 'connected'
+						@noble_peripheral.once 'disconnect', =>
+							clearInterval(@timer)
+							@timer = null
+							@set_noble_peripheral(null)
+							@set_state(peripheral_states.DISCONNECTED)
+							@emit 'disconnected'
+							return
 						debug_info "Connected to peripheral #{@address}"
 						resolve(@)
 					return
@@ -487,17 +496,31 @@ scan_for_peripheral = (peripheral_filter) ->
 	ensure_noble_state('poweredOn')
 	.then ->
 		new Promise (resolve, reject) ->
-			noble.on 'discover', (noble_peripheral) ->
+			register_temporary_event_listener noble, 'discover', (noble_peripheral) ->
 				peripheral = new Peripheral(noble_peripheral)
 				debug_info "  Scanned peripheral #{peripheral.address} (Name:\"#{peripheral.advertisement.name}\", advertised services:[#{peripheral.advertisement.service_uuids.join(', ')}])"
 				if peripheral_filter(peripheral)
 					debug_info "Peripheral #{peripheral.address} matches filters, stopping scanning"
 					noble.stopScanning()
 					resolve(peripheral)
+					return true
 				return
 			debug_info "Starting to scan for peripheral..."
 			noble.startScanning()
 			return
+
+# Scan for a peripheral advertising the service with ID <service_id> and connect to it. Returns a Promise that resolves to that service
+connect_to_service = (service_id) ->
+	scan_for_peripheral
+		service: service_id
+	.then (peripheral) ->
+		peripheral.get_service(service_id)
+
+# Scan for a peripheral advertising the service with ID <service_id> and connect to it. Returns a Promise that resolves to the characteristic with ID <characteristic_id> of that service
+connect_to_characteristic = (service_id, characteristic_id) ->
+	connect_to_service(service_id)
+	.then (service) ->
+		service.get_characteristic(characteristic_id)
 
 # Scan for a peripheral that matches the filter <peripheral_filter> and connect to it. Returns a Promise that resolves to the peripheral
 connect_to_peripheral = (peripheral_filter) ->
@@ -511,14 +534,27 @@ discover_peripheral = (peripheral_filter) ->
 	.then (peripheral) ->
 		peripheral.ensure_discovered()
 
+# Scan for a peripheral advertising the service with ID <service_id> and connect to it. Publish the data <data> to the characteristic with ID <characteristic_id> of that service. If <without_response> is set to true, the data will be published without requiring a confirmation response. Returns a Promise that resolves when the data was published
+publish_to_characteristic = (service_id, characteristic_id, data, without_response) ->
+	connect_to_characteristic(service_id, characteristic_id)
+	.then (characteristic) ->
+		characteristic.write(data, without_response)
+
 # Stop scanning for peripherals. Returns a Promise that resolves if the scanning has stopped.
 stop_scanning = ->
 	new Promise (resolve, reject) ->
 		noble.once 'scanStop', ->
+			#noble.removeAllListeners('discover')
 			resolve()
 			return
 		noble.stopScanning()
 		return
+
+# Scan for a peripheral advertising the service with ID <service_id> and connect to it. Subscribe to the characteristic with ID <characteristic_id> of that service. Returns a Promise that resolves when the subscribing was successful
+subscribe_to_characteristic = (service_id, characteristic_id, subscriber_callback) ->
+	connect_to_characteristic(service_id, characteristic_id)
+	.then (characteristic) ->
+		characteristic.subscribe(subscriber_callback)
 
 # Returns a promise that is a time-limited wrapper for promise <promise>. If the promise <promise> does not resolve within <time_limit> microseconds, the promise is rejected
 time_limit_promise = (promise, time_limit, timeout_error_message) ->
@@ -545,10 +581,19 @@ module.exports =
 	canonicalize:
 		address: canonicalize_mac_address
 		bluetooth_uuid: canonicalize_bluetooth_uuid
+	connect:
+		characteristic: connect_to_characteristic
+		peripheral: connect_to_peripheral
+		service: connect_to_service
+	connect_to_characteristic: connect_to_characteristic
 	connect_to_peripheral: connect_to_peripheral
+	connect_to_service: connect_to_service
 	discover_peripheral: discover_peripheral
 	filter: filter_types
+	publish_to_characteristic: publish_to_characteristic
 	scan_for_peripheral: scan_for_peripheral
 	stop_scanning: stop_scanning
+	subscribe_to_characteristic: subscribe_to_characteristic
 	utils:
 		time_limit_promise: time_limit_promise
+
