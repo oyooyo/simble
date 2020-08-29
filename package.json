@@ -4,8 +4,6 @@
   "description": "SIMple access to BLE (Bluetooth Low Energy = Bluetooth 4.x) devices",
   "main": "simble.js",
   "scripts": {
-    "compile": "coffee --bare --no-header --map --compile *.coffee",
-    "prepublishOnly": "npm run compile",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -13,11 +11,13 @@
     "url": "https://github.com/oyooyo/simble.git"
   },
   "keywords": [
-    "Bluetooth Low Energy",
-    "Bluetooth LE",
-    "Bluetooth 4.x",
-    "Bluetooth 4.0",
+    "BLE",
     "Bluetooth",
+    "Bluetooth 4",
+    "Bluetooth 4.0",
+    "Bluetooth 4.x",
+    "Bluetooth LE",
+    "Bluetooth Low Energy",
     "BTLE",
     "noble"
   ],
@@ -28,9 +28,6 @@
   "dependencies": {
     "@abandonware/noble": "^1.9.2-1",
     "debug": "^4.1.1"
-  },
-  "devDependencies": {
-    "coffeescript": "^2.3.2"
   },
   "files": [
     "*.js",
